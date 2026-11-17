@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -46,9 +47,16 @@ import (
 // SAML service provider already has a private key, we borrow that key
 // to sign the JWTs as well.
 type Middleware struct {
-	ServiceProvider  saml.ServiceProvider
-	OnError          func(w http.ResponseWriter, r *http.Request, err error)
-	Binding          string // saml.HTTPRedirectBinding, saml.HTTPPostBinding or saml.HTTPPostSimpleSignBinding
+	ServiceProvider saml.ServiceProvider
+	OnError         func(w http.ResponseWriter, r *http.Request, err error)
+
+	// Binding is the binding authentication requests are sent with:
+	// saml.HTTPRedirectBinding, saml.HTTPPostBinding or
+	// saml.HTTPPostSimpleSignBinding. If empty, HTTP-Redirect is used when
+	// the IDP metadata has an endpoint for it, HTTP-POST otherwise.
+	// HandleStartAuthFlow fails with an error when the IDP metadata has no
+	// SingleSignOnService endpoint for the binding in effect.
+	Binding          string
 	ResponseBinding  string // saml.HTTPPostBinding, saml.HTTPArtifactBinding or saml.HTTPPostSimpleSignBinding
 	RequestTracker   RequestTracker
 	Session          SessionProvider
@@ -254,6 +262,24 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		if bindingLocation == "" {
 			binding = saml.HTTPPostBinding
 			bindingLocation = m.ServiceProvider.GetSSOBindingLocation(binding)
+		}
+	}
+
+	// A request binding the IDP metadata has no endpoint for has no
+	// destination: the AuthnRequest's Destination would be empty, and the
+	// HTTP-Redirect binding would send the browser to a relative URL on
+	// this SP, looping the login without an error. Refuse the request
+	// instead. (A binding that is not a request binding at all falls
+	// through to the panic below, as before.)
+	if bindingLocation == "" {
+		switch binding {
+		case saml.HTTPRedirectBinding, saml.HTTPPostBinding, saml.HTTPPostSimpleSignBinding:
+			if m.Binding != "" {
+				internalServerError(w, fmt.Errorf("samlsp: the IDP metadata has no SingleSignOnService endpoint for the configured Binding %q", m.Binding))
+			} else {
+				internalServerError(w, errors.New("samlsp: the IDP metadata has no SingleSignOnService endpoint for the HTTP-Redirect or HTTP-POST binding"))
+			}
+			return
 		}
 	}
 

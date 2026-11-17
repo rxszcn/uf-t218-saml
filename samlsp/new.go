@@ -133,6 +133,12 @@ type Options struct {
 	// the IDP metadata has an endpoint for it, HTTP-POST otherwise. The
 	// HTTP-POST-SimpleSign binding signs requests with Key, so it requires
 	// SignRequest. See Middleware.Binding.
+	//
+	// The binding is not checked against IDPMetadata here: the metadata is
+	// often set or completed after New returns (see FetchMetadata). If it
+	// has no SingleSignOnService endpoint for the binding when the auth
+	// flow starts, HandleStartAuthFlow fails with an error instead of
+	// sending the user agent to an empty destination.
 	Binding string
 
 	// UseSimpleSignResponse asks the IDP to send responses with the
